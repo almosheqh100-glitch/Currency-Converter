@@ -1,0 +1,77 @@
+name: Build Android APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - app.py
+      - .github/workflows/android.yml
+
+permissions:
+  contents: read
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install Briefcase
+        run: python -m pip install briefcase==0.3.26
+      - name: Prepare Android project from app.py
+        run: |
+          mkdir -p src/currencyconverter
+          cp app.py src/currencyconverter/app.py
+          touch src/currencyconverter/__init__.py
+          printf '%s\n' 'from currencyconverter.app import main' 'main().main_loop()' > src/currencyconverter/__main__.py
+          cat > pyproject.toml <<'TOML'
+          [tool.briefcase]
+          project_name = "Currency Converter"
+          bundle = "com.almosheqh"
+          version = "0.1.0"
+          url = "https://github.com/almosheqh100-glitch/Currency-Converter"
+          license = "Proprietary"
+          author = "almosheqh100-glitch"
+
+          [tool.briefcase.app.currencyconverter]
+          formal_name = "Currency Converter"
+          description = "Arabic currency converter"
+          sources = ["src/currencyconverter"]
+          requires = ["httpx==0.28.1"]
+
+          [tool.briefcase.app.currencyconverter.android]
+          requires = ["toga-android==0.5.3"]
+          build_gradle_dependencies = [
+              "com.google.android.material:material:1.12.0",
+              "androidx.swiperefreshlayout:swiperefreshlayout:1.1.0",
+          ]
+          TOML
+          python -m compileall -q src
+      - name: Create Android project
+        run: briefcase create android --no-input
+      - name: Build Android app
+        run: briefcase build android --no-input
+      - name: Package installable debug APK
+        run: briefcase package android -p debug-apk --no-input
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Currency-Converter-APK
+          path: dist/*.apk
+          if-no-files-found: error
+          retention-days: 90
+      - name: Upload build logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-build-logs
+          path: logs/
+          if-no-files-found: ignore
