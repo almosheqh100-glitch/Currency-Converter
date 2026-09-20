@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+build/
+dist/
+release/
+logs/
+.venv/
+*.pk8
+*.pem
+*.jks
+*.keystore
+*signing-bundle*.json

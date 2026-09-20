@@ -14,6 +14,12 @@ Currency Converter - Arabic-interface Android app built with Toga/Briefcase.
 
 import asyncio
 import json
+from decimal import Decimal, InvalidOperation
+
+try:
+    from .arabic_money import parse_amount, rounded_amount, amount_in_words, format_amount
+except ImportError:
+    from arabic_money import parse_amount, rounded_amount, amount_in_words, format_amount
 from datetime import datetime
 from pathlib import Path
 
@@ -150,6 +156,12 @@ class CurrencyConverterApp(toga.App):
                        padding=15, color="#1565C0"),
         )
 
+        self.words_output = toga.MultilineTextInput(
+            readonly=True,
+            placeholder="النتيجة بالحروف العربية",
+            style=Pack(height=100, padding=5, font_size=16, text_align=RIGHT),
+        )
+
         self.status_label = toga.Label(
             "جاري تحميل الأسعار...",
             style=Pack(text_align=CENTER, font_size=11, color="#666666", padding=5),
@@ -164,7 +176,7 @@ class CurrencyConverterApp(toga.App):
         box = toga.Box(style=Pack(direction=COLUMN, padding=10))
         for widget in (
             title, amount_row, from_row, to_row, swap_button,
-            convert_button, self.result_label, self.status_label, refresh_button,
+            convert_button, self.result_label, self.words_output, self.status_label, refresh_button,
         ):
             box.add(widget)
 
@@ -180,31 +192,25 @@ class CurrencyConverterApp(toga.App):
         self._do_convert()
 
     def _do_convert(self):
+        # Clear the previous wording so invalid input never leaves a stale amount.
+        self.words_output.value = ""
         if not self.rates:
             self.result_label.text = "الأسعار غير متوفرة بعد"
             return
         try:
-            amount = float(self.amount_input.value)
-        except (TypeError, ValueError):
-            self.result_label.text = "الرجاء إدخال رقم صحيح"
-            return
-
-        from_code = self._code_from_label(self.from_selection.value)
-        to_code = self._code_from_label(self.to_selection.value)
-
-        from_rate = self.rates.get(from_code)
-        to_rate = self.rates.get(to_code)
-        if not from_rate or not to_rate:
-            self.result_label.text = "تعذر إيجاد سعر لهذه العملة"
-            return
-
-        # كل الأسعار محسوبة بالنسبة إلى الدولار الأمريكي
-        usd_amount = amount / from_rate
-        converted = usd_amount * to_rate
-
-        self.result_label.text = (
-            f"{amount:,.2f} {from_code} = {converted:,.2f} {to_code}"
-        )
+            amount = parse_amount(self.amount_input.value)
+            from_code = self._code_from_label(self.from_selection.value)
+            to_code = self._code_from_label(self.to_selection.value)
+            from_rate = Decimal(str(self.rates.get(from_code, 0)))
+            to_rate = Decimal(str(self.rates.get(to_code, 0)))
+            if not from_rate.is_finite() or not to_rate.is_finite() or from_rate <= 0 or to_rate <= 0:
+                self.result_label.text = "تعذر إيجاد سعر لهذه العملة"
+                return
+            converted = rounded_amount(amount / from_rate * to_rate, to_code)
+            self.result_label.text = f"{format_amount(converted, to_code)} {CURRENCIES[to_code]}"
+            self.words_output.value = amount_in_words(converted, to_code)
+        except (ValueError, InvalidOperation, KeyError):
+            self.result_label.text = "الرجاء إدخال مبلغ صحيح ضمن النطاق المدعوم"
 
     @staticmethod
     def _code_from_label(label: str) -> str:
