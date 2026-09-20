@@ -33,7 +33,7 @@ jobs:
         run: python -m pip install briefcase==0.3.26
       - name: Test application startup and Arabic result
         run: |
-          python -m pip install toga-dummy==0.5.3 httpx==0.28.1 pytest
+          python -m pip install toga-dummy==0.5.3 httpx==0.28.1 pytest pillow
           python test_app_smoke.py
       - name: Prepare Android project from app.py
         run: |
