@@ -1,4 +1,4 @@
-name: Build Android APK
+name: Build Android Release
 
 on:
   workflow_dispatch:
@@ -6,6 +6,9 @@ on:
     branches: [main]
     paths:
       - app.py
+      - arabic_money.py
+      - test_arabic_money.py
+      - test_app_smoke.py
       - .github/workflows/android.yml
 
 permissions:
@@ -13,7 +16,7 @@ permissions:
 
 jobs:
   android:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -24,19 +27,25 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+      - name: Test Arabic money formatting
+        run: python -m unittest -v test_arabic_money.py
       - name: Install Briefcase
         run: python -m pip install briefcase==0.3.26
+      - name: Test application startup and Arabic result
+        run: |
+          python -m pip install toga-dummy==0.5.3 httpx==0.28.1
+          python test_app_smoke.py
       - name: Prepare Android project from app.py
         run: |
           mkdir -p src/currencyconverter
-          cp app.py src/currencyconverter/app.py
+          cp app.py arabic_money.py src/currencyconverter/
           touch src/currencyconverter/__init__.py
           printf '%s\n' 'from currencyconverter.app import main' 'main().main_loop()' > src/currencyconverter/__main__.py
           cat > pyproject.toml <<'TOML'
           [tool.briefcase]
           project_name = "Currency Converter"
           bundle = "com.almosheqh"
-          version = "0.1.0"
+          version = "1.0.0"
           url = "https://github.com/almosheqh100-glitch/Currency-Converter"
           license = "Proprietary"
           author = "almosheqh100-glitch"
@@ -59,13 +68,44 @@ jobs:
         run: briefcase create android --no-input
       - name: Build Android app
         run: briefcase build android --no-input
-      - name: Package installable debug APK
-        run: briefcase package android -p debug-apk --no-input
-      - name: Upload APK
+      - name: Package release APK
+        run: briefcase package android -p apk --no-input
+      - name: Sign release with the permanent app key
+        id: signing
+        env:
+          SIGNING_BUNDLE: ${{ secrets.ANDROID_SIGNING_BUNDLE }}
+        run: |
+          if [ -z "$SIGNING_BUNDLE" ]; then
+            echo "Signing key is not configured. Release compilation passed; no installable release will be published."
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          umask 077
+          python - <<'PY'
+          import base64, json, os
+          from pathlib import Path
+          bundle = json.loads(os.environ["SIGNING_BUNDLE"])
+          tmp = Path(os.environ["RUNNER_TEMP"])
+          (tmp / "release.pk8").write_bytes(base64.b64decode(bundle["private_key_pk8"]))
+          (tmp / "release.pem").write_text(bundle["certificate_pem"])
+          PY
+          trap 'rm -f "$RUNNER_TEMP/release.pk8" "$RUNNER_TEMP/release.pem"' EXIT
+          BUILD_TOOLS=$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -n 1)
+          BUILD_TOOLS=$(dirname "$BUILD_TOOLS")
+          APK=$(find dist -maxdepth 1 -name '*.apk' -print -quit)
+          test -n "$APK"
+          mkdir -p release
+          "$BUILD_TOOLS/zipalign" -P 16 -f 4 "$APK" "$RUNNER_TEMP/aligned.apk"
+          "$BUILD_TOOLS/apksigner" sign --key "$RUNNER_TEMP/release.pk8" --cert "$RUNNER_TEMP/release.pem" --out release/Currency-Converter-1.0.0.apk "$RUNNER_TEMP/aligned.apk"
+          "$BUILD_TOOLS/apksigner" verify --verbose --print-certs release/Currency-Converter-1.0.0.apk
+          sha256sum release/Currency-Converter-1.0.0.apk > release/SHA256SUMS.txt
+          echo "signed=true" >> "$GITHUB_OUTPUT"
+      - name: Upload signed release APK
+        if: steps.signing.outputs.signed == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: Currency-Converter-APK
-          path: dist/*.apk
+          name: Currency-Converter-1.0.0-Release
+          path: release/
           if-no-files-found: error
           retention-days: 90
       - name: Upload build logs on failure
