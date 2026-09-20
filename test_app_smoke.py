@@ -2,15 +2,14 @@
 import asyncio
 import os
 os.environ["TOGA_BACKEND"] = "toga_dummy"
-from app import main, currency_label
+from app import main, currency_label, CurrencyConverterApp
 
 
 async def exercise():
-    application = main()
-    async def idle(widget=None, **kwargs):
+    async def idle(self, widget=None, **kwargs):
         await asyncio.Event().wait()
-    application.poll_rates_loop = idle
-    application.startup()
+    CurrencyConverterApp.poll_rates_loop = idle
+    application = main()
     application.rates = {"USD": 1, "SAR": 3.75, "KWD": 0.307}
     application.from_selection.value = currency_label("SAR")
     application.to_selection.value = currency_label("SAR")
